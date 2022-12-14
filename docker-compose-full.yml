@@ -1,0 +1,170 @@
+version: "3.5"
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-11.5-alpine}
+    environment:
+      - POSTGRES_LOGGING=true
+      - POSTGRES_DB_FILE=/run/secrets/postgres_db
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
+      - POSTGRES_USER_FILE=/run/secrets/postgres_user
+    ports:
+      - ${POSTGRES_PORT:-5432}:5432
+    secrets:
+      - postgres_db
+      - postgres_password
+      - postgres_user
+    shm_size: '2gb'
+    volumes:
+      - postgres-data/${NETWORK:-mainnet}:/var/lib/postgresql/data
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+
+  cardano-node:
+    image: inputoutput/cardano-node:1.35.4
+    command: [
+      "run",
+      "--config", "/config/config.json",
+      "--database-path", "/data/db",
+      "--socket-path", "/ipc/node.socket",
+      "--topology", "/config/topology.json"
+    ]
+    volumes:
+      - ./config/cardano/network/${NETWORK:-mainnet}/cardano-node:/config
+      - ./config/cardano/network/${NETWORK:-mainnet}/genesis:/genesis
+      - ./data/${NETWORK:-mainnet}/node-db:/data
+      - node-ipc:/ipc
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "400k"
+        max-file: "20"
+
+  ogmios:
+    image: cardanosolutions/ogmios:latest-${NETWORK:-mainnet}
+    #build:
+    #  context: ogmios/
+    #  target: ogmios
+    #  cache_from: [cardanosolutions/ogmios:latest]
+    restart: on-failure
+    command: [
+      "--host", "0.0.0.0",
+      "--node-socket", "/ipc/node.socket",
+      "--node-config", "/config/cardano-node/config.json"
+    ]
+    volumes:
+      - ./config/cardano/network/${NETWORK:-mainnet}:/config
+      - node-ipc:/ipc
+    ports:
+      - ${OGMIOS_PORT:-1337}:1337
+
+  cardano-db-sync:
+    image: inputoutput/cardano-db-sync:${CARDANO_DB_SYNC_VERSION:-13.0.5}
+    command: [
+      "--config", "/config/cardano-db-sync/config.json",
+      "--socket-path", "/node-ipc/node.socket"
+    ]
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - RESTORE_SNAPSHOT=${RESTORE_SNAPSHOT:-}
+      - RESTORE_RECREATE_DB=N
+    depends_on:
+      - cardano-node
+      - postgres
+    secrets:
+      - postgres_password
+      - postgres_user
+      - postgres_db
+    volumes:
+      - ./config/cardano/network/${NETWORK:-mainnet}:/config
+      - ./data/${NETWORK:-mainnet}/node-db:/var/lib/cexplorer
+      - node-ipc:/node-ipc
+    restart: on-failure
+    stop_signal: SIGINT
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+
+  hasura:
+    #build:
+    #  context: ./cardano-graphql/packages/api-cardano-db-hasura/hasura
+    #  cache_from: [inputoutput/cardano-graphql-hasura:latest]
+    image: inputoutput/cardano-graphql-hasura:${CARDANO_GRAPHQL_VERSION:-7.0.2}
+    ports:
+      - ${HASURA_PORT:-8090}:8080
+    depends_on:
+      - "postgres"
+    restart: on-failure
+    environment:
+      - HASURA_GRAPHQL_ENABLE_CONSOLE=true
+      - HASURA_GRAPHQL_CORS_DOMAIN=http://localhost:9695
+    secrets:
+      - postgres_db
+      - postgres_password
+      - postgres_user
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+
+  cardano-graphql:
+    #build:
+    #  args:
+    #    - NETWORK=${NETWORK:-mainnet}
+    #    - METADATA_SERVER_URI=${METADATA_SERVER_URI:-https://tokens.cardano.org}
+    #  cache_from: [ inputoutput/cardano-graphql:latest ]
+    #  context: ./cardano-graphql/
+    #  target: server
+    image: inputoutput/cardano-graphql:${CARDANO_GRAPHQL_VERSION:-7.0.2}-${NETWORK:-mainnet}
+    environment:
+      - ALLOW_INTROSPECTION=true
+      - CACHE_ENABLED=true
+      - LOGGER_MIN_SEVERITY=${LOGGER_MIN_SEVERITY:-info}
+    expose:
+      - ${API_PORT:-3100}
+    ports:
+      - ${API_PORT:-3100}:3100
+    restart: on-failure
+    secrets:
+      - postgres_db
+      - postgres_password
+      - postgres_user
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+
+  plutus-dev-env:
+    build: .
+    image: arradev/plutus-dev-env:latest
+    env_file:
+      - ./config/${NETWORK:-mainnet}-variables.env
+    volumes:
+      - ./config/cardano/network/${NETWORK:-mainnet}/genesis:/genesis
+      - ./workspace/:/workspace/
+      - ./data/haskell-packages/:/root/.cabal/packages/hackage.haskell.org
+      - node-ipc:/ipc
+    tty: true
+    restart: on-failure
+
+secrets:
+  postgres_db:
+    file: ./config/postgres/postgres_db
+  postgres_password:
+    file: ./config/postgres/postgres_password
+  postgres_user:
+    file: ./config/postgres/postgres_user
+
+volumes:
+  node-ipc:
+  postgres-data:

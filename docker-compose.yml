@@ -1,0 +1,39 @@
+version: "3.5"
+
+services:
+  cardano-node:
+    image: inputoutput/cardano-node:1.35.4
+    command: [
+      "run",
+      "--config", "/config/config.json",
+      "--database-path", "/data/db",
+      "--socket-path", "/ipc/node.socket",
+      "--topology", "/config/topology.json"
+    ]
+    volumes:
+      - ./config/cardano/network/${NETWORK:-mainnet}/cardano-node:/config
+      - ./config/cardano/network/${NETWORK:-mainnet}/genesis:/genesis
+      - ./data/${NETWORK:-mainnet}/node-db:/data
+      - node-ipc:/ipc
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "400k"
+        max-file: "20"
+
+  plutus-dev-env:
+    build: .
+    image: arradev/plutus-dev-env:latest
+    env_file:
+      - ./config/${NETWORK:-mainnet}-variables.env
+    volumes:
+      - ./config/cardano/network/${NETWORK:-mainnet}/genesis:/genesis
+      - ./workspace/:/workspace/
+      - ./data/haskell-packages/:/root/.cabal/packages/hackage.haskell.org
+      - node-ipc:/ipc
+    tty: true
+    restart: on-failure
+
+volumes:
+  node-ipc:
