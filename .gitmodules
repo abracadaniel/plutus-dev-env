@@ -1,0 +1,6 @@
+[submodule "config/cardano"]
+	path = config/cardano
+	url = ../../input-output-hk/cardano-configurations.git
+[submodule "workspace/plutus-starter-kit"]
+	path = workspace/plutus-starter-kit
+	url = ../../txpipe/plutus-starter-kit.git
